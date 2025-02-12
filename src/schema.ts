@@ -112,11 +112,11 @@ export class TemplateKey<Template extends string> extends SchemaField<
    *   - `#{?key}` for optional keys
    */
   private parseTemplate(template: string): void {
-    const regex = /\{(\??)(\w+)\}/g;
+    // Notice the regex includes the literal '#' so that the runtime parsing
+    // matches our compile-time template literal types.
+    const regex = /#\{(\??)(\w+)\}/g;
     let match: RegExpExecArray | null;
-    while (true) {
-      match = regex.exec(template);
-      if (match === null) break;
+    while ((match = regex.exec(template)) !== null) {
       const [, optionalFlag, key] = match;
       if (optionalFlag === "?") {
         this.optionalKeys.push(key as ExtractOptionalTemplateKeys<Template>);
@@ -137,8 +137,7 @@ export class TemplateKey<Template extends string> extends SchemaField<
         throw new Error(`Missing required value for ${key}`);
       }
     }
-    // Replace the placeholders using the same regex.
-    return this.templateString.replace(/\{(\??)(\w+)\}/g, (_, _flag, key) => {
+    return this.templateString.replace(/#\{(\??)(\w+)\}/g, (_, _flag, key) => {
       return values[key as keyof TemplateVariables<Template>] ?? "";
     });
   }
@@ -147,8 +146,6 @@ export class TemplateKey<Template extends string> extends SchemaField<
 /**
  * A helper class to create various field types.
  */
-
-// biome-ignore lint/complexity/noStaticOnlyClass: <explanation>
 export class TableSchema {
   /**
    * Create a primary key field.
@@ -186,18 +183,10 @@ export class TableSchema {
       new Date(value).toISOString()
     );
   }
-
-  // Uncomment and extend as needed for global secondary indexes (GSI)
-  // public static gsi(indexName: string) {
-  // 	return {
-  // 		pk: (key: string, metadata?: any) => new SchemaField(key, metadata),
-  // 		sk: (key: string, metadata?: any) => new SchemaField(key, metadata),
-  // 	};
-  // }
 }
 
 /**
- * Options to configure the schema.
+ * Options that affect how the schema builder behaves.
  */
 export interface SchemaOptions {
   transform?: {
@@ -206,14 +195,18 @@ export interface SchemaOptions {
 }
 
 /**
- * The DynamoSchema class is the entry point for configuring a table.
- * It stores the table and region names, accepts a schema definition,
- * and returns a SchemaBuilder to populate a concrete item.
+ * The DynamoSchema class is the entry point for configuring a table:
+ * - It stores the table and region names.
+ * - It accepts a schema definition.
+ * - It returns a SchemaBuilder to later populate a concrete item.
+ *
+ * We use a generic so that after calling `.schema()`, the instance “remembers”
+ * its schema shape.
  */
-export class DynamoSchema {
-  private tableName!: string;
-  private regionName!: string;
-  private schemaDefinition!: SchemaDefinition;
+export class DynamoSchema<T extends SchemaDefinition> {
+  private tableName: string;
+  private regionName = "";
+  private schemaDefinition!: T;
   private schemaOptions?: SchemaOptions;
 
   private constructor(name: string) {
@@ -223,12 +216,12 @@ export class DynamoSchema {
   /**
    * Create a new DynamoSchema instance.
    */
-  public static table(name: string): DynamoSchema {
+  public static table(name: string): DynamoSchema<any> {
     return new DynamoSchema(name);
   }
 
   /**
-   * Set the region for the table.
+   * Sets the AWS region.
    */
   public region(name: string): this {
     this.regionName = name;
@@ -236,38 +229,42 @@ export class DynamoSchema {
   }
 
   /**
-   * Define the schema along with optional options.
+   * Defines the schema.
    */
-  public schema<T extends SchemaDefinition>(
-    definition: T,
+  public schema<TDef extends SchemaDefinition>(
+    definition: TDef,
     options?: SchemaOptions
-  ): this {
-    this.schemaDefinition = definition;
+  ): DynamoSchema<TDef> {
+    this.schemaDefinition = definition as unknown as T;
     this.schemaOptions = options;
-    return this;
+    return this as unknown as DynamoSchema<TDef>;
   }
 
   /**
-   * Creates a new SchemaBuilder instance with the schema definition.
+   * Creates a new SchemaBuilder instance to “fill in” a concrete item.
    */
-  public createBuilder(): SchemaBuilder<SchemaDefinition> {
+  public createBuilder(): SchemaBuilder<T> {
     return new SchemaBuilder(this.schemaDefinition, this.schemaOptions);
   }
 
-  public createQueryBuilder(): QueryBuilder<SchemaDefinition> {
+  public createQueryBuilder(): QueryBuilder<T> {
     return new QueryBuilder(this.schemaDefinition, this.schemaOptions);
   }
 }
 
 /**
  * The SchemaBuilder is responsible for “filling in” the schema with actual values.
+ * It supports:
+ *   - Setting individual field values (using optional transforms).
+ *   - Converting keys to snake_case.
+ *   - Building the final object.
  */
 export class SchemaBuilder<T extends SchemaDefinition> {
   private values: Record<string, any> = {};
 
   constructor(
-    private definition: T,
-    private options?: SchemaOptions
+    private readonly definition: T,
+    private readonly options?: SchemaOptions
   ) {}
 
   /**
@@ -294,16 +291,16 @@ export class SchemaBuilder<T extends SchemaDefinition> {
   }
 
   /**
-   * Converts a camelCase key to snake_case.
+   * Converts a camelCase string to snake_case.
    */
   private toSnakeCase(key: string): string {
     return key.replace(/([A-Z])/g, "_$1").toLowerCase();
   }
 
   /**
-   * Returns the final built object.
+   * Returns the final object with optional key transformation.
    */
-  public build(): Record<string, any> {
+  build(): Record<string, any> {
     const finalValues: Record<string, any> = {};
 
     for (const key in this.values) {
@@ -317,26 +314,3 @@ export class SchemaBuilder<T extends SchemaDefinition> {
     return finalValues;
   }
 }
-
-const schema = DynamoSchema.table("my_table")
-  .region("us-east-1")
-  .schema(
-    {
-      pk: TableSchema.pk("my_pk").template("USER#{userId}"),
-      sk: TableSchema.sk("my_sk").template("ORDER#{?orderId}"),
-      orderDate: TableSchema.date(),
-      address: TableSchema.string(),
-      metadata: TableSchema.object(),
-    },
-    { transform: { toSnakeCase: true } }
-  );
-
-// Build an item using the schema builder.
-const item = schema
-  .createBuilder()
-  .set("", "")
-  .set("sk", {}) // optional value may be omitted or empty
-  .set("orderDate", new Date())
-  .set("address", "123 Fake St")
-  .set("metadata", { foo: "bar" })
-  .build();
