@@ -1,0 +1,36 @@
+{
+  "name": "dynamo-client",
+  "version": "1.0.0",
+  "description": "Typescript abstraction for AWS DynamoDB client",
+  "author": "Igor Souza",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IgorSSK/dynamo-client.git"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "rimraf dist && tsc",
+    "format": "biome check --apply \"src/**/*.ts\" \"test/**/*.ts\"",
+    "publish": "npm publish",
+    "test": "npx ts-node test.ts"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.13.1",
+    "eslint": "^9.20.1",
+    "jest": "^29.7.0",
+    "prettier": "^3.5.0",
+    "rimraf": "^6.0.1",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.744.0",
+    "@aws-sdk/lib-dynamodb": "^3.744.0"
+  }
+}
